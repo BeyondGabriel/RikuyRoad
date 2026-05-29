@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="es" dir="ltr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="RikuyRoad" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <meta name="description" content="Monitoreo de fatiga al conducir con detección facial offline" />
+
+  <title>RikuyRoad</title>
+
+  <link rel="manifest" href="manifest.json" />
+  <link rel="icon" sizes="192x192" href="assets/icon-192.png" />
+  <link rel="apple-touch-icon" href="assets/icon-192.png" />
+  <link rel="stylesheet" href="style.css" />
+
+  <!--
+    TensorFlow.js y MediaPipe se cargan desde CDN.
+    El Service Worker los intercepta y cachea en el primer load.
+    Versiones fijadas para reproducibilidad.
+  -->
+  <script src="libs/tf.min.js" defer></script>
+  <script type="module">
+    import { FaceLandmarker, FilesetResolver } from './libs/vision_bundle.mjs';
+    window.FaceLandmarker  = FaceLandmarker;
+    window.FilesetResolver = FilesetResolver;
+    window._mediapipeReady = true;
+  </script>
+</head>
+
+<body>
+
+<!-- ================================================================
+     PANTALLA 1: SPLASH
+     Visible mientras se cargan los modelos de IA.
+================================================================ -->
+<section id="screen-splash" class="screen active" role="status" aria-live="polite" aria-label="Cargando aplicación">
+
+  <div class="splash-logo">
+    <div class="splash-logo-icon" aria-hidden="true">🛣️</div>
+    <span class="splash-title">RikuyRoad</span>
+    <span class="splash-subtitle">Seguridad vial inteligente</span>
+  </div>
+
+  <div class="splash-spinner" role="presentation" aria-hidden="true"></div>
+
+  <p class="splash-message" id="splash-status-text">
+    Configurando Inteligencia Artificial…<br>Por favor espere
+  </p>
+
+  <div class="splash-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="splash-progress-bar-wrap">
+    <div class="splash-progress-bar" id="splash-progress-bar"></div>
+  </div>
+
+</section>
+
+
+<!-- ================================================================
+     PANTALLA 2: IDLE
+     Cámara inactiva, botón para iniciar monitoreo.
+================================================================ -->
+<section id="screen-idle" class="screen" aria-label="Pantalla de inicio">
+
+  <!-- Preview de cámara (placeholder mientras está inactivo) -->
+  <div class="idle-camera-preview" aria-hidden="true">
+    <div class="idle-camera-placeholder">
+      <!-- Icono de cámara SVG inline -->
+      <svg viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <rect x="4" y="14" width="48" height="34" rx="6" stroke="currentColor" stroke-width="2.5"/>
+        <circle cx="28" cy="31" r="9" stroke="currentColor" stroke-width="2.5"/>
+        <circle cx="28" cy="31" r="4" fill="currentColor" opacity="0.4"/>
+        <path d="M18 14V11a3 3 0 0 1 3-3h14a3 3 0 0 1 3 3v3" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
+        <circle cx="44" cy="22" r="2" fill="currentColor" opacity="0.5"/>
+      </svg>
+      <p>Cámara inactiva</p>
+    </div>
+  </div>
+
+  <!-- Sección inferior con controles -->
+  <div class="idle-bottom">
+    <div class="idle-brand">
+      <div>
+        <div class="idle-brand-name">RikuyRoad</div>
+        <div class="idle-brand-tag">Detección de fatiga al conducir</div>
+      </div>
+    </div>
+
+    <!-- Botón principal -->
+    <button class="btn-start" id="btn-start" aria-label="Iniciar monitoreo de fatiga">
+      🚗 Iniciar Monitoreo
+    </button>
+
+    <!-- Banner de instalación PWA (oculto por defecto; JS lo muestra si procede) -->
+    <div class="install-banner" id="install-banner" hidden aria-label="Instalar aplicación">
+      <p>📲 Agrega RikuyRoad a tu pantalla de inicio para usarla sin conexión.</p>
+      <button class="btn-install" id="btn-install" aria-label="Instalar aplicación">Instalar</button>
+      <button class="btn-dismiss" id="btn-dismiss-install" aria-label="Cerrar sugerencia de instalación">×</button>
+    </div>
+
+  </div>
+
+</section>
+
+
+<!-- ================================================================
+     PANTALLA 3: MONITORING
+     Vídeo a pantalla completa + HUD + overlays de alerta.
+================================================================ -->
+<section id="screen-monitoring" class="screen" aria-label="Monitoreo activo">
+
+  <!-- Vídeo de cámara frontal -->
+  <video
+    id="camera-video"
+    autoplay
+    playsinline
+    muted
+    aria-label="Vista de cámara frontal"
+    aria-hidden="true"
+  ></video>
+
+  <!-- HUD: elementos visuales no interactivos -->
+  <div class="hud" aria-hidden="true">
+    <!-- LED de estado -->
+    <div class="hud-led" id="hud-led" title="Estado de detección"></div>
+
+    <!-- Hora y batería -->
+    <div class="hud-info">
+      <span class="hud-clock" id="hud-clock">--:--</span>
+      <span class="hud-battery">
+        <span class="hud-battery-icon" id="hud-battery-icon">🔋</span>
+        <span id="hud-battery-level">--%</span>
+      </span>
+    </div>
+
+    <!-- Contador de microsueños -->
+    <div class="hud-microsleep">
+      <span class="hud-microsleep-label">Microsueños</span>
+      <span class="hud-microsleep-count" id="hud-microsleep-count">0</span>
+    </div>
+  </div>
+
+  <!-- Botón pausa (interactivo sobre el vídeo) -->
+  <button
+    class="btn-pause"
+    id="btn-pause"
+    aria-label="Pausar monitoreo"
+    data-press-start="0"
+  >
+    ⏸
+  </button>
+
+  <!-- Botón finalizar viaje -->
+  <button
+    class="btn-end-trip"
+    id="btn-end-trip"
+    aria-label="Finalizar viaje y ver resumen"
+  >
+    Finalizar viaje
+  </button>
+
+
+  <!-- ============================================================
+       OVERLAY: PREALERTA (fatiga detectada)
+  ============================================================ -->
+  <div
+    id="overlay-prealert"
+    class="alert-overlay"
+    role="alertdialog"
+    aria-modal="true"
+    aria-label="Prealerta de fatiga"
+    aria-live="assertive"
+  >
+    <p class="prealert-text">¿Atento<br>al camino?</p>
+    <button
+      class="btn-overlay btn-understood"
+      id="btn-understood"
+      aria-label="Confirmar que estoy atento"
+    >
+      Entendido
+    </button>
+  </div>
+
+
+  <!-- ============================================================
+       OVERLAY: ALERTA INICIAL (microsueño 3s)
+  ============================================================ -->
+  <div
+    id="overlay-alert-initial"
+    class="alert-overlay"
+    role="alertdialog"
+    aria-modal="true"
+    aria-label="Alerta: microsueño detectado"
+    aria-live="assertive"
+  >
+    <span class="alert-icon" aria-hidden="true">⚠️</span>
+    <p class="alert-title">¡DESPIERTE!</p>
+    <p class="alert-subtitle">PARE Y DESCANSE</p>
+  </div>
+
+
+  <!-- ============================================================
+       OVERLAY: ALERTA MÁXIMA (escalada 6s)
+  ============================================================ -->
+  <div
+    id="overlay-alert-max"
+    class="alert-overlay"
+    role="alertdialog"
+    aria-modal="true"
+    aria-label="Alerta máxima: emergencia de fatiga"
+    aria-live="assertive"
+  >
+    <span class="alert-icon" aria-hidden="true">🚨</span>
+    <p class="alert-title">¡DESPIERTE!</p>
+    <p class="alert-subtitle">PARE Y DESCANSE</p>
+  </div>
+
+
+  <!-- ============================================================
+       OVERLAY: FASE REDUCIDA (ojos abiertos durante alerta)
+  ============================================================ -->
+  <div
+    id="overlay-reduced"
+    class="alert-overlay"
+    role="alertdialog"
+    aria-modal="true"
+    aria-label="Confirmar que está despierto"
+    aria-live="assertive"
+  >
+    <p class="reduced-title">¿Está despierto?</p>
+    <div class="reduced-timer" id="reduced-timer" aria-live="polite">5</div>
+    <button
+      class="btn-overlay btn-awake"
+      id="btn-awake"
+      aria-label="Confirmar que estoy despierto"
+    >
+      ESTOY DESPIERTO
+    </button>
+  </div>
+
+
+  <!-- ============================================================
+       OVERLAY: RECOMENDACIONES post-microsueño
+  ============================================================ -->
+  <div
+    id="overlay-recommendations"
+    role="dialog"
+    aria-modal="true"
+    aria-label="Recomendaciones de seguridad"
+    aria-live="polite"
+  >
+    <span class="rec-icon" id="rec-icon" aria-hidden="true">😴</span>
+    <p class="rec-title" id="rec-title">Detectamos un microsueño</p>
+    <p class="rec-body" id="rec-body">
+      Tu cuerpo necesita descanso. Para en un lugar seguro,
+      toma un café o duerme al menos 20 minutos antes de continuar.
+    </p>
+    <button
+      class="btn-rec-close"
+      id="btn-rec-close"
+      aria-label="Cerrar recomendaciones y reanudar monitoreo"
+    >
+      Entendido, seguiré con cuidado
+    </button>
+  </div>
+
+</section>
+
+
+<!-- ================================================================
+     PANTALLA 4: PAUSA
+     Monitoreo pausado manualmente.
+================================================================ -->
+<section id="screen-paused" class="screen" aria-label="Monitoreo en pausa">
+
+  <span class="paused-icon" aria-hidden="true">⏸️</span>
+  <h1 class="paused-title">Monitoreo en pausa</h1>
+
+  <div class="paused-info" aria-live="polite">
+    <div class="paused-clock" id="paused-clock">--:--</div>
+    <div class="paused-battery" id="paused-battery">Batería: --%</div>
+    <div class="paused-trip-time" id="paused-trip-time">Tiempo de viaje: 0:00</div>
+  </div>
+
+  <button
+    class="btn-resume"
+    id="btn-resume"
+    aria-label="Reanudar monitoreo"
+  >
+    ▶
+  </button>
+
+</section>
+
+
+<!-- ================================================================
+     PANTALLA 5: SUMMARY
+     Resumen al finalizar el viaje.
+================================================================ -->
+<section id="screen-summary" class="screen" aria-label="Resumen del viaje">
+
+  <div class="summary-header">
+    <span class="summary-emoji" aria-hidden="true">🏁</span>
+    <h1 class="summary-title">Viaje finalizado</h1>
+    <p class="summary-subtitle">Resumen de tu sesión de conducción</p>
+  </div>
+
+  <div class="summary-stats" role="list">
+
+    <div class="stat-card" role="listitem">
+      <span class="stat-label">⏱ Duración del viaje</span>
+      <span class="stat-value" id="summary-duration">0:00</span>
+    </div>
+
+    <div class="stat-card" role="listitem">
+      <span class="stat-label">😴 Microsueños detectados</span>
+      <span class="stat-value" id="summary-microsleeps">0</span>
+    </div>
+
+    <div class="stat-card" role="listitem">
+      <span class="stat-label">⚠️ Alertas preventivas</span>
+      <span class="stat-value" id="summary-prealerts">0</span>
+    </div>
+
+  </div>
+
+  <button
+    class="btn-summary-close"
+    id="btn-summary-close"
+    aria-label="Cerrar resumen y volver al inicio"
+  >
+    Cerrar
+  </button>
+
+</section>
+
+
+<!-- ================================================================
+     PANTALLA 6: ERROR
+     Para errores de cámara u otros fallos críticos.
+================================================================ -->
+<section id="screen-error" class="screen" aria-label="Error">
+  <span class="error-icon" aria-hidden="true">📵</span>
+  <h1 class="error-title" id="error-title">Sin acceso a la cámara</h1>
+  <p class="error-body" id="error-body">
+    RikuyRoad necesita la cámara frontal para monitorear la fatiga.
+    Permite el acceso en la configuración de tu navegador y vuelve a intentarlo.
+  </p>
+  <button class="btn-retry" id="btn-retry" aria-label="Volver a intentarlo">
+    Reintentar
+  </button>
+</section>
+
+
+<!-- ================================================================
+     SCRIPTS
+================================================================ -->
+
+<!-- Registro del Service Worker -->
+<script>
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker
+        .register('./sw.js', { scope: './' })
+        .then((reg) => {
+          console.log('[App] SW registrado:', reg.scope);
+        })
+        .catch((err) => {
+          console.warn('[App] SW no registrado:', err);
+        });
+    });
+  }
+</script>
+
+<!-- Lógica principal (cargada al final para no bloquear el render) -->
+<script src="app.js" defer></script>
+
+</body>
+</html>

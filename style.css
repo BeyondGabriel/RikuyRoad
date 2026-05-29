@@ -1,0 +1,882 @@
+/* ============================================================
+   RikuyRoad — style.css
+   Temas claro/oscuro, animaciones de alerta, layout de pantallas
+   ============================================================ */
+
+/* ----------------------------------------------------------------
+   Variables de color — modo claro por defecto
+---------------------------------------------------------------- */
+:root {
+  --color-bg:          #f2f2f2;
+  --color-surface:     #ffffff;
+  --color-text:        #111111;
+  --color-text-muted:  #555555;
+  --color-border:      rgba(0,0,0,0.12);
+
+  /* LED estados */
+  --led-green:   #22c55e;
+  --led-orange:  #f97316;
+  --led-red:     #ef4444;
+
+  /* Alertas */
+  --alert-red:    #ef4444;
+  --alert-orange: rgba(249,115,22,0.82);
+  --alert-yellow: #eab308;
+  --alert-amber-overlay: rgba(234,88,12,0.88);
+  --alert-red-overlay:   rgba(220,38,38,0.92);
+
+  /* Botones principales */
+  --btn-primary-bg:   #111111;
+  --btn-primary-text: #ffffff;
+  --btn-danger-bg:    #dc2626;
+  --btn-danger-text:  #ffffff;
+
+  /* Pause button */
+  --pause-btn-bg:  rgba(0,0,0,0.55);
+  --pause-btn-fg:  #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg:         #0a0a0a;
+    --color-surface:    #1a1a1a;
+    --color-text:       #f0f0f0;
+    --color-text-muted: #999999;
+    --color-border:     rgba(255,255,255,0.1);
+    --btn-primary-bg:   #f0f0f0;
+    --btn-primary-text: #0a0a0a;
+  }
+}
+
+/* ----------------------------------------------------------------
+   Reset y base
+---------------------------------------------------------------- */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: system-ui, -apple-system, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+  /* Subir brillo en modo oscuro (noche) para visibilidad del conductor */
+  -webkit-text-size-adjust: 100%;
+}
+
+@media (prefers-color-scheme: dark) {
+  html {
+    filter: brightness(1.05);
+  }
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  outline: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* ----------------------------------------------------------------
+   Pantallas — todas apiladas, se muestran con .active
+---------------------------------------------------------------- */
+.screen {
+  position: fixed;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+.screen.active { display: flex; }
+
+/* ================================================================
+   PANTALLA: SPLASH (#screen-splash)
+================================================================ */
+#screen-splash {
+  background: #0a0a0a;
+  gap: 32px;
+}
+
+.splash-logo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.splash-logo-icon {
+  width: 80px;
+  height: 80px;
+  border-radius: 20px;
+  background: #1a1a1a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 42px;
+  line-height: 1;
+}
+
+.splash-title {
+  font-size: 28px;
+  font-weight: 700;
+  color: #f0f0f0;
+  letter-spacing: -0.5px;
+}
+
+.splash-subtitle {
+  font-size: 13px;
+  color: #888;
+  text-align: center;
+  max-width: 260px;
+  line-height: 1.5;
+}
+
+.splash-message {
+  font-size: 15px;
+  color: #aaa;
+  text-align: center;
+  max-width: 280px;
+  line-height: 1.6;
+}
+
+/* Barra de progreso de carga */
+.splash-progress {
+  width: 240px;
+  height: 3px;
+  background: #222;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.splash-progress-bar {
+  height: 100%;
+  width: 0%;
+  background: #f0f0f0;
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+/* Spinner de carga */
+.splash-spinner {
+  width: 32px;
+  height: 32px;
+  border: 2px solid #333;
+  border-top-color: #f0f0f0;
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ================================================================
+   PANTALLA: IDLE (#screen-idle)
+================================================================ */
+#screen-idle {
+  background: var(--color-bg);
+  gap: 0;
+  justify-content: flex-start;
+  padding: 0;
+}
+
+/* Preview de cámara deshabilitada / placeholder */
+.idle-camera-preview {
+  width: 100%;
+  flex: 1;
+  background: #111;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.idle-camera-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: #555;
+}
+
+.idle-camera-placeholder svg {
+  width: 56px;
+  height: 56px;
+  opacity: 0.4;
+}
+
+.idle-camera-placeholder p {
+  font-size: 14px;
+  opacity: 0.5;
+}
+
+/* Sección inferior idle */
+.idle-bottom {
+  width: 100%;
+  background: var(--color-surface);
+  padding: 24px 24px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  border-top: 1px solid var(--color-border);
+}
+
+.idle-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.idle-brand-name {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+
+.idle-brand-tag {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+/* Botón principal "Iniciar Monitoreo" */
+.btn-start {
+  width: 100%;
+  padding: 18px;
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
+  font-size: 18px;
+  font-weight: 600;
+  border-radius: 14px;
+  letter-spacing: -0.2px;
+  transition: opacity 0.15s, transform 0.1s;
+  min-height: 60px;
+}
+
+.btn-start:active {
+  opacity: 0.85;
+  transform: scale(0.98);
+}
+
+/* Banner de instalación PWA */
+.install-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+
+.install-banner p {
+  flex: 1;
+  font-size: 13px;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+
+.btn-install {
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 14px;
+  border-radius: 8px;
+  white-space: nowrap;
+}
+
+.btn-dismiss {
+  background: none;
+  color: var(--color-text-muted);
+  font-size: 20px;
+  line-height: 1;
+  padding: 4px;
+}
+
+/* ================================================================
+   PANTALLA: MONITORING (#screen-monitoring)
+================================================================ */
+#screen-monitoring {
+  background: #000;
+  padding: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Video — ocupa toda la pantalla */
+#camera-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Espejo horizontal para cámara frontal */
+  transform: scaleX(-1);
+}
+
+/* HUD — capa de interfaz sobre el vídeo */
+.hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+}
+
+/* ---- LED de estado ---- */
+.hud-led {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--led-green);
+  box-shadow: 0 0 8px var(--led-green);
+  transition: background 0.3s, box-shadow 0.3s;
+}
+
+.hud-led.orange {
+  background: var(--led-orange);
+  box-shadow: 0 0 8px var(--led-orange);
+}
+
+.hud-led.red {
+  background: var(--led-red);
+  box-shadow: 0 0 10px var(--led-red);
+}
+
+/* ---- Info superior: hora y batería ---- */
+.hud-info {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.hud-clock {
+  font-size: 15px;
+  font-weight: 600;
+  color: #fff;
+  text-shadow: 0 1px 4px rgba(0,0,0,0.7);
+  letter-spacing: 0.5px;
+}
+
+.hud-battery {
+  font-size: 13px;
+  color: rgba(255,255,255,0.85);
+  text-shadow: 0 1px 4px rgba(0,0,0,0.7);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.hud-battery-icon {
+  font-size: 15px;
+}
+
+/* ---- Contador de microsueños ---- */
+.hud-microsleep {
+  position: absolute;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.5);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border-radius: 20px;
+  padding: 6px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hud-microsleep-label {
+  font-size: 12px;
+  color: rgba(255,255,255,0.7);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.hud-microsleep-count {
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+}
+
+/* ---- Botón de pausa ---- */
+.btn-pause {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--pause-btn-bg);
+  color: var(--pause-btn-fg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  pointer-events: all;
+  /* Retardo de 200ms para evitar activaciones accidentales */
+  transition: opacity 0.15s;
+  z-index: 20;
+  /* touch-action: none para capturar el tiempo del toque en JS */
+  touch-action: none;
+}
+
+.btn-pause:active { opacity: 0.7; }
+.btn-pause.hidden { display: none; }
+
+/* ---- Botón "Finalizar viaje" ---- */
+.btn-end-trip {
+  position: absolute;
+  bottom: 36px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  color: rgba(255,255,255,0.85);
+  font-size: 15px;
+  font-weight: 500;
+  padding: 12px 28px;
+  border-radius: 24px;
+  border: 1px solid rgba(255,255,255,0.2);
+  pointer-events: all;
+  transition: opacity 0.2s, background 0.2s;
+  min-height: 48px;
+  white-space: nowrap;
+  z-index: 20;
+}
+
+.btn-end-trip:disabled {
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+/* ================================================================
+   OVERLAYS DE ALERTA (dentro de #screen-monitoring)
+================================================================ */
+
+/* Base común de overlays */
+.alert-overlay {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  z-index: 30;
+  padding: 32px 24px;
+  text-align: center;
+  pointer-events: all;
+}
+
+.alert-overlay.visible { display: flex; }
+
+/* ---- PREALERTA (naranja) ---- */
+#overlay-prealert {
+  background: var(--alert-orange);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+}
+
+.prealert-text {
+  font-size: 32px;
+  font-weight: 800;
+  color: #fff;
+  line-height: 1.2;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  max-width: 300px;
+}
+
+/* ---- ALERTA INICIAL (rojo parpadeante 2Hz) ---- */
+#overlay-alert-initial {
+  animation: blink-red 0.5s step-end infinite;
+}
+
+@keyframes blink-red {
+  0%, 100% { background: #dc2626; }
+  50%       { background: #0a0a0a; }
+}
+
+/* ---- ALERTA MÁXIMA (estroboscópico 10Hz) ---- */
+#overlay-alert-max {
+  animation: blink-strobe 0.1s step-end infinite;
+}
+
+@keyframes blink-strobe {
+  0%, 100% { background: #dc2626; }
+  50%       { background: #0a0a0a; }
+}
+
+/* Texto de alerta (inicial y máxima) */
+.alert-icon {
+  font-size: 64px;
+  line-height: 1;
+  animation: alert-shake 0.3s ease-in-out infinite alternate;
+}
+
+@keyframes alert-shake {
+  from { transform: rotate(-3deg) scale(1); }
+  to   { transform: rotate(3deg) scale(1.05); }
+}
+
+.alert-title {
+  font-size: 38px;
+  font-weight: 900;
+  color: #fff;
+  line-height: 1.1;
+  text-shadow: 0 2px 12px rgba(0,0,0,0.5);
+  letter-spacing: -0.5px;
+}
+
+.alert-subtitle {
+  font-size: 18px;
+  color: rgba(255,255,255,0.9);
+  font-weight: 600;
+}
+
+/* ---- FASE REDUCIDA (amarillo) ---- */
+#overlay-reduced {
+  background: rgba(202,138,4,0.95);
+}
+
+.reduced-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 1px 6px rgba(0,0,0,0.3);
+}
+
+/* Temporizador de 5s en fase reducida */
+.reduced-timer {
+  font-size: 52px;
+  font-weight: 800;
+  color: #fff;
+  text-shadow: 0 2px 10px rgba(0,0,0,0.3);
+  line-height: 1;
+}
+
+.reduced-timer.urgent {
+  color: #fef08a;
+  animation: pulse-timer 0.5s ease-in-out infinite;
+}
+
+@keyframes pulse-timer {
+  0%, 100% { transform: scale(1); }
+  50%       { transform: scale(1.08); }
+}
+
+/* ================================================================
+   BOTONES DE OVERLAY (Entendido, Estoy despierto)
+================================================================ */
+.btn-overlay {
+  width: 100%;
+  max-width: 320px;
+  padding: 20px;
+  border-radius: 16px;
+  font-size: 20px;
+  font-weight: 700;
+  min-height: 64px;
+  letter-spacing: -0.2px;
+  transition: transform 0.1s, opacity 0.1s;
+}
+
+.btn-overlay:active {
+  transform: scale(0.96);
+  opacity: 0.85;
+}
+
+.btn-understood {
+  background: #fff;
+  color: #ea580c;
+}
+
+.btn-awake {
+  background: #fff;
+  color: #854d0e;
+}
+
+/* ================================================================
+   OVERLAY POST-MICROSUEÑO (recomendaciones)
+================================================================ */
+#overlay-recommendations {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 32px 24px;
+  text-align: center;
+  pointer-events: all;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+#overlay-recommendations.visible { display: flex; }
+
+/* Primer microsueño — ámbar */
+#overlay-recommendations.level-1 {
+  background: rgba(120,53,15,0.92);
+}
+
+/* Segundo microsueño o más — rojo */
+#overlay-recommendations.level-2 {
+  background: rgba(127,29,29,0.95);
+}
+
+.rec-icon  { font-size: 52px; line-height: 1; }
+.rec-title {
+  font-size: 26px;
+  font-weight: 800;
+  color: #fff;
+  line-height: 1.2;
+  max-width: 300px;
+}
+
+.rec-body {
+  font-size: 16px;
+  color: rgba(255,255,255,0.88);
+  line-height: 1.6;
+  max-width: 300px;
+}
+
+.btn-rec-close {
+  background: rgba(255,255,255,0.2);
+  border: 2px solid rgba(255,255,255,0.5);
+  color: #fff;
+  font-size: 17px;
+  font-weight: 600;
+  padding: 16px 40px;
+  border-radius: 14px;
+  min-height: 56px;
+  min-width: 200px;
+}
+
+/* ================================================================
+   PANTALLA: PAUSA (#screen-paused)
+================================================================ */
+#screen-paused {
+  background: #0a0a0a;
+  gap: 24px;
+  padding: 48px 32px;
+}
+
+.paused-icon {
+  font-size: 56px;
+  opacity: 0.6;
+}
+
+.paused-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: #f0f0f0;
+}
+
+.paused-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.paused-clock {
+  font-size: 42px;
+  font-weight: 700;
+  color: #f0f0f0;
+  letter-spacing: 1px;
+}
+
+.paused-battery {
+  font-size: 15px;
+  color: #777;
+}
+
+.paused-trip-time {
+  font-size: 14px;
+  color: #555;
+}
+
+.btn-resume {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: #f0f0f0;
+  color: #0a0a0a;
+  font-size: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 8px;
+  transition: transform 0.1s, opacity 0.1s;
+}
+
+.btn-resume:active {
+  transform: scale(0.93);
+  opacity: 0.85;
+}
+
+/* ================================================================
+   PANTALLA: SUMMARY (#screen-summary)
+================================================================ */
+#screen-summary {
+  background: var(--color-bg);
+  padding: 48px 32px 40px;
+  gap: 0;
+  justify-content: flex-start;
+}
+
+.summary-header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 36px;
+}
+
+.summary-emoji { font-size: 48px; }
+
+.summary-title {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--color-text);
+  letter-spacing: -0.3px;
+}
+
+.summary-subtitle {
+  font-size: 14px;
+  color: var(--color-text-muted);
+}
+
+/* Tarjetas de estadísticas */
+.summary-stats {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 40px;
+}
+
+.stat-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 16px;
+  padding: 20px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.stat-label {
+  font-size: 14px;
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.stat-value {
+  font-size: 28px;
+  font-weight: 800;
+  color: var(--color-text);
+  letter-spacing: -0.5px;
+}
+
+.stat-value.warning { color: #ea580c; }
+.stat-value.danger  { color: #dc2626; }
+
+.btn-summary-close {
+  width: 100%;
+  padding: 18px;
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
+  font-size: 17px;
+  font-weight: 600;
+  border-radius: 14px;
+  min-height: 58px;
+  margin-top: auto;
+  transition: opacity 0.15s, transform 0.1s;
+}
+
+.btn-summary-close:active {
+  opacity: 0.85;
+  transform: scale(0.98);
+}
+
+/* ================================================================
+   PANTALLA: ERROR (#screen-error)
+================================================================ */
+#screen-error {
+  background: var(--color-bg);
+  gap: 20px;
+  padding: 40px 32px;
+  text-align: center;
+}
+
+.error-icon  { font-size: 52px; }
+.error-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.error-body {
+  font-size: 15px;
+  color: var(--color-text-muted);
+  line-height: 1.6;
+  max-width: 280px;
+}
+
+.btn-retry {
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
+  font-size: 16px;
+  font-weight: 600;
+  padding: 14px 40px;
+  border-radius: 12px;
+  min-height: 52px;
+}
+
+/* ================================================================
+   UTILIDADES
+================================================================ */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0,0,0,0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Ocultar video antes de iniciarlo */
+#camera-video:not([srcObject]) {
+  display: none;
+}
+
+/* Prevenir scroll en overlays táctiles */
+.alert-overlay, #overlay-recommendations {
+  overscroll-behavior: contain;
+  touch-action: none;
+}
