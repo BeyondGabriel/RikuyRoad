@@ -1,19 +1,20 @@
 /* ============================================================
-   RikuyRoad — app.js  (archivo completo)
+   RikuyRoad — app.js  (archivo completo corregido)
    Contiene:
      · Constantes y configuración global
      · FSM — Máquina de Estados Finita
      · DOM — Referencias centralizadas
-     · CameraManager
+     · CameraManager (con selector de cámara)
      · DetectionEngine (MediaPipe + TF.js + fallback EAR)
      · BlinkBuffer — ventana deslizante 60s
      · EyeClosedTimer — microsueño y escalada
+     · HeadDownTimer — detección de cabeza caída (8s sin rostro)
      · AlertSystem — audio (AudioContext) y vibración
      · TripTracker — métricas de sesión
      · HUD — reloj, batería, LED, contador
      · ReducedPhase — temporizador 5s fase amarilla
      · UIController — wiring de botones y FSM
-     · PWAInstall — banner "Añadir a pantalla de inicio"
+     · PWAInstall — banner de instalación (Android + iOS)
      · Loader — splash + carga de modelos
      · Arranque — DOMContentLoaded
    ============================================================ */
@@ -31,8 +32,9 @@ const CFG = Object.freeze({
   ESCALATE_AFTER_MS:          3_000,
   REDUCED_CONFIRM_MS:         5_000,
   REDUCED_RECLOSE_MS:         1_500,
+  HEAD_DOWN_THRESHOLD_MS:     8_000,  // 8 segundos sin rostro
   PAUSE_RESET_WINDOW_MS:    120_000,
-  PAUSE_MIN_PRESS_MS:           200,
+  PAUSE_DEBOUNCE_MS:            500,
   INFERENCE_INTERVAL_MS:         80,
   MEDIAPIPE_MODEL_URL: 'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
   MEDIAPIPE_WASM_PATH: 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm',
@@ -112,6 +114,8 @@ const DOM = {
   btnInstall:             document.getElementById('btn-install'),
   btnDismissInstall:      document.getElementById('btn-dismiss-install'),
   video:                  document.getElementById('camera-video'),
+  cameraPlaceholder:      document.getElementById('camera-placeholder'),
+  cameraSelect:           document.getElementById('camera-select'),
   hudLed:                 document.getElementById('hud-led'),
   hudClock:               document.getElementById('hud-clock'),
   hudBatteryIcon:         document.getElementById('hud-battery-icon'),
@@ -166,37 +170,85 @@ function hideAllAlertOverlays() {
 }
 
 /* ================================================================
-   CAMERA MANAGER
+   CAMERA MANAGER  (con selector de cámara y placeholder)
 ================================================================ */
 const cameraManager = (() => {
-  let _stream = null;
-  let _active = false;
+  let _stream    = null;
+  let _active    = false;
+  let _deviceId  = null;
 
   return {
     get active() { return _active; },
 
+    setDeviceId(id) { _deviceId = id; },
+
+    async enumerate() {
+      // Pedir permiso temporal para listar dispositivos
+      try {
+        await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      } catch (_) { /* no importa, solo para listar */ }
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const cams = devices.filter(d => d.kind === 'videoinput');
+      const list = [];
+      for (const d of cams) {
+        const label = d.label || `Cámara ${list.length + 1}`;
+        let tipo = label;
+        // Clasificar como frontal si el label incluye "front"
+        if (/front/i.test(label)) tipo = 'Cámara frontal';
+        // Excluir explícitamente cámaras traseras / environment
+        if (/back|rear|environment/i.test(label)) continue;
+        list.push({ deviceId: d.deviceId, label: tipo });
+      }
+      // Si no hay ninguna tras filtrar, ofrecer la frontal (por defecto)
+      if (list.length === 0 && cams.length > 0) {
+        list.push({ deviceId: cams[0].deviceId, label: 'Cámara frontal' });
+      }
+      return list;
+    },
+
     async start() {
       if (_stream) this.stop();
+
+      // Mostrar placeholder, ocultar video
+      if (DOM.cameraPlaceholder) DOM.cameraPlaceholder.classList.remove('hidden');
+      DOM.video.classList.add('hidden');
+
+      const constraints = {
+        video: {
+          width:  { ideal: 640 },
+          height: { ideal: 480 },
+          frameRate: { ideal: 30, min: 15 },
+        },
+        audio: false,
+      };
+      if (_deviceId) constraints.video.deviceId = { exact: _deviceId };
+      else constraints.video.facingMode = 'user';
+
       try {
-        _stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: 'user',
-            width:      { ideal: 640 },
-            height:     { ideal: 480 },
-            frameRate:  { ideal: 30, min: 15 },
-          },
-          audio: false,
-        });
+        _stream = await navigator.mediaDevices.getUserMedia(constraints);
       } catch (err) {
         _active = false;
+        if (DOM.cameraPlaceholder) DOM.cameraPlaceholder.classList.add('hidden');
         throw err;
       }
+
       DOM.video.srcObject = _stream;
+
       await new Promise((resolve, reject) => {
         DOM.video.onloadedmetadata = resolve;
         DOM.video.onerror = reject;
       });
-      await DOM.video.play().catch(() => {});
+
+      try {
+        await DOM.video.play();
+      } catch (playErr) {
+        console.warn('[Camera] play() falló:', playErr);
+        // Continuamos; el placeholder se oculta de todos modos para depuración
+      }
+
+      // Ocultar placeholder y mostrar video
+      if (DOM.cameraPlaceholder) DOM.cameraPlaceholder.classList.add('hidden');
+      DOM.video.classList.remove('hidden');
       _active = true;
       return DOM.video;
     },
@@ -238,21 +290,19 @@ const detectionEngine = (() => {
   const _ctx    = _canvas.getContext('2d', { willReadFrequently: true });
   _canvas.width = _canvas.height = CFG.EYE_PATCH_SIZE;
 
-  /* ---- Esperar a que los scripts CDN hayan cargado ---- */
   function _waitForLibs() {
-  return new Promise((resolve) => {
-    const check = () => {
-      const tfOk = typeof window.tf              !== 'undefined';
-      const mpOk = typeof window.FaceLandmarker  !== 'undefined'
-                && typeof window.FilesetResolver  !== 'undefined';
-      if (tfOk && mpOk) resolve();
-      else setTimeout(check, 100);
-    };
-    check();
-  });
-}
+    return new Promise((resolve) => {
+      const check = () => {
+        const tfOk = typeof window.tf              !== 'undefined';
+        const mpOk = typeof window.FaceLandmarker  !== 'undefined'
+                  && typeof window.FilesetResolver  !== 'undefined';
+        if (tfOk && mpOk) resolve();
+        else setTimeout(check, 100);
+      };
+      check();
+    });
+  }
 
-  /* ---- Inicialización ---- */
   async function init(onProgress) {
     const progress = onProgress || (() => {});
     progress(5, 'Cargando librerías…');
@@ -278,7 +328,6 @@ const detectionEngine = (() => {
       outputFacialTransformationMatrixes: false,
     });
 
-    /* Cachear assets de MediaPipe en SW */
     _cacheInSW([
       CFG.MEDIAPIPE_MODEL_URL,
       CFG.MEDIAPIPE_WASM_PATH + '/vision_wasm_internal.js',
@@ -307,7 +356,6 @@ const detectionEngine = (() => {
     navigator.serviceWorker.controller.postMessage({ type: 'CACHE_URLS', urls });
   }
 
-  /* ---- Bucle de inferencia ---- */
   function start(callback) {
     if (_running) stop();
     _resultCb = callback;
@@ -360,7 +408,6 @@ const detectionEngine = (() => {
     });
   }
 
-  /* ---- Clasificación con TF.js ---- */
   async function _classifyModel(video, pts) {
     const vw = video.videoWidth, vh = video.videoHeight;
     const lp = _extractPatch(video, pts, CFG.LEFT_EYE_LANDMARKS,  vw, vh);
@@ -393,7 +440,6 @@ const detectionEngine = (() => {
     });
   }
 
-  /* ---- Fallback EAR ---- */
   function _classifyEAR(pts) {
     const EAR_THRESHOLD = 0.20;
     return [
@@ -493,6 +539,31 @@ const eyeClosedTimer = (() => {
 })();
 
 /* ================================================================
+   HEAD DOWN TIMER — detección de cabeza caída (8 s sin rostro)
+================================================================ */
+const headDownTimer = (() => {
+  let _faceMissingSince = null;
+  const THRESHOLD_MS = CFG.HEAD_DOWN_THRESHOLD_MS;
+
+  return {
+    update(faceDetected) {
+      const now = Date.now();
+      if (!faceDetected && _faceMissingSince === null) {
+        _faceMissingSince = now;
+      } else if (faceDetected) {
+        _faceMissingSince = null;
+      }
+      if (_faceMissingSince && (now - _faceMissingSince) >= THRESHOLD_MS) {
+        _faceMissingSince = null;
+        return { headDown: true };
+      }
+      return { headDown: false };
+    },
+    reset() { _faceMissingSince = null; },
+  };
+})();
+
+/* ================================================================
    ALERT SYSTEM — AudioContext + vibración
 ================================================================ */
 const alertSystem = (() => {
@@ -559,8 +630,6 @@ const alertSystem = (() => {
 
   function _stopStrobe()  { clearInterval(_strobeTimer); _strobeTimer = null; }
   function _stopSoft()    { clearInterval(_softTimer);   _softTimer   = null; }
-
-  /* ---- API pública ---- */
 
   function startPrealert() {
     _beep(880, 200, 0.7, 'sine');
@@ -775,57 +844,58 @@ const reducedPhase = (() => {
 ================================================================ */
 const uiController = (() => {
 
-  /* ----------------------------------------------------------
-     Callback principal del motor de detección
-  ---------------------------------------------------------- */
+  let alertEscalateTimeout = null;
+
   function onDetectionResult({ faceDetected, bothClosed }) {
     const state = fsm.current;
 
-    /* Actualizar buffer de parpadeo */
+    // Actualizar buffer siempre en MONITORING o PREALERT
     if (state === STATE.MONITORING || state === STATE.PREALERT) {
       blinkBuffer.update(bothClosed);
     }
 
-    /* LED */
+    // Evaluar cabeza caída y microsueño también en PREALERT
+    if (state === STATE.MONITORING || state === STATE.PREALERT) {
+      const head = headDownTimer.update(faceDetected);
+      if (head.headDown) {
+        fsm.transition(STATE.ALERT_INITIAL);
+        return;
+      }
+
+      const ev = eyeClosedTimer.update(bothClosed);
+      if (ev.microsleepDetected) {
+        fsm.transition(STATE.ALERT_INITIAL);
+        return;
+      }
+
+      if (!bothClosed && blinkBuffer.isFatigued() && state === STATE.MONITORING) {
+        fsm.transition(STATE.PREALERT);
+      }
+    }
+
+    // LED solo en MONITORING
     if (state === STATE.MONITORING) {
       hud.setLed(!faceDetected ? 'orange' : bothClosed ? 'red' : 'green');
     }
 
-    /* Fase reducida: vigilar re-cierre */
     if (state === STATE.REDUCED) {
       reducedPhase.updateEyeState(bothClosed);
       return;
     }
 
-    /* En alertas: si abre los ojos → fase reducida */
     if ((state === STATE.ALERT_INITIAL || state === STATE.ALERT_MAX) && !bothClosed) {
       fsm.transition(STATE.REDUCED);
       return;
     }
-
-    /* Solo lógica de detección en MONITORING */
-    if (state !== STATE.MONITORING) return;
-
-    /* Evaluar microsueño */
-    const ev = eyeClosedTimer.update(bothClosed);
-    if (ev.microsleepDetected) {
-      fsm.transition(STATE.ALERT_INITIAL);
-      return;
-    }
-
-    /* Evaluar fatiga (ventana deslizante) */
-    if (!bothClosed && blinkBuffer.isFatigued()) {
-      fsm.transition(STATE.PREALERT);
-    }
   }
 
-  /* ----------------------------------------------------------
-     Transiciones de estado — efectos de entrada/salida
-  ---------------------------------------------------------- */
   fsm.onChange(async (newState, prevState) => {
+    // Cancelar timeout de escalada al salir de estados de alerta
+    if (newState !== STATE.ALERT_INITIAL && alertEscalateTimeout) {
+      clearTimeout(alertEscalateTimeout);
+      alertEscalateTimeout = null;
+    }
 
-    /* Ocultar todos los overlays de alerta al cambiar de estado,
-       excepto si vamos a mostrar uno específico a continuación */
     if (newState !== STATE.PREALERT &&
         newState !== STATE.ALERT_INITIAL &&
         newState !== STATE.ALERT_MAX &&
@@ -835,14 +905,12 @@ const uiController = (() => {
 
     switch (newState) {
 
-      /* ---- MONITORING ---- */
       case STATE.MONITORING: {
         alertSystem.stopAll();
         reducedPhase.stop();
         hideAllAlertOverlays();
         hideOverlay(DOM.overlayRecommendations);
 
-        /* Volvemos de PAUSA */
         if (prevState === STATE.PAUSED) {
           const pausedMs = tripTracker.currentPauseMs;
           tripTracker.pauseEnd();
@@ -859,6 +927,7 @@ const uiController = (() => {
 
         showScreen('monitoring');
         eyeClosedTimer.reset();
+        headDownTimer.reset();
         hud.setLed('green');
         DOM.btnEndTrip.disabled = false;
         DOM.btnPause.classList.remove('hidden');
@@ -871,19 +940,17 @@ const uiController = (() => {
         break;
       }
 
-      /* ---- PREALERT ---- */
       case STATE.PREALERT: {
         alertSystem.startPrealert();
         tripTracker.recordPrealert();
         hud.setLed('orange');
         DOM.btnEndTrip.disabled = true;
         showOverlay(DOM.overlayPrealert);
-        /* Detección sigue activa en segundo plano */
         break;
       }
 
-      /* ---- ALERT_INITIAL ---- */
       case STATE.ALERT_INITIAL: {
+        if (alertEscalateTimeout) clearTimeout(alertEscalateTimeout);
         hideAllAlertOverlays();
         alertSystem.startAlertInitial();
         hud.setLed('red');
@@ -891,8 +958,7 @@ const uiController = (() => {
         DOM.btnPause.classList.add('hidden');
         showOverlay(DOM.overlayAlertInitial);
 
-        /* Temporizador de escalada a máxima (+3 s) */
-        setTimeout(() => {
+        alertEscalateTimeout = setTimeout(() => {
           if (fsm.current === STATE.ALERT_INITIAL) {
             fsm.transition(STATE.ALERT_MAX);
           }
@@ -900,8 +966,8 @@ const uiController = (() => {
         break;
       }
 
-      /* ---- ALERT_MAX ---- */
       case STATE.ALERT_MAX: {
+        if (alertEscalateTimeout) clearTimeout(alertEscalateTimeout);
         hideAllAlertOverlays();
         alertSystem.startAlertMax();
         hud.setLed('red');
@@ -911,8 +977,8 @@ const uiController = (() => {
         break;
       }
 
-      /* ---- REDUCED ---- */
       case STATE.REDUCED: {
+        if (alertEscalateTimeout) clearTimeout(alertEscalateTimeout);
         hideAllAlertOverlays();
         alertSystem.startReduced();
         hud.setLed('orange');
@@ -920,13 +986,13 @@ const uiController = (() => {
         showOverlay(DOM.overlayReduced);
 
         reducedPhase.start(
-          /* onConfirmed */ () => {
+          () => {
             alertSystem.stopAll();
             tripTracker.recordMicrosleep();
             hud.tick();
             _showRecommendations();
           },
-          /* onEscalate */ (reason) => {
+          (reason) => {
             console.log('[Reduced] Escalando:', reason);
             fsm.transition(STATE.ALERT_MAX);
           }
@@ -934,16 +1000,16 @@ const uiController = (() => {
         break;
       }
 
-      /* ---- PAUSED ---- */
       case STATE.PAUSED: {
+        if (alertEscalateTimeout) clearTimeout(alertEscalateTimeout);
         alertSystem.stopAll();
         reducedPhase.stop();
         detectionEngine.stop();
         blinkBuffer.freeze();
         eyeClosedTimer.reset();
+        headDownTimer.reset();
         tripTracker.pauseBegin();
 
-        /* Liberar cámara completamente en pausa */
         cameraManager.stop();
 
         showScreen('paused');
@@ -953,14 +1019,15 @@ const uiController = (() => {
         break;
       }
 
-      /* ---- SUMMARY ---- */
       case STATE.SUMMARY: {
+        if (alertEscalateTimeout) clearTimeout(alertEscalateTimeout);
         alertSystem.stopAll();
         reducedPhase.stop();
         detectionEngine.stop();
         cameraManager.stop();
         hud.stop();
         eyeClosedTimer.reset();
+        headDownTimer.reset();
         blinkBuffer.reset();
 
         const s = tripTracker.getSummary();
@@ -974,7 +1041,6 @@ const uiController = (() => {
         break;
       }
 
-      /* ---- IDLE ---- */
       case STATE.IDLE: {
         alertSystem.stopAll();
         detectionEngine.stop();
@@ -984,7 +1050,6 @@ const uiController = (() => {
         break;
       }
 
-      /* ---- ERROR ---- */
       case STATE.ERROR: {
         alertSystem.stopAll();
         detectionEngine.stop();
@@ -996,9 +1061,6 @@ const uiController = (() => {
     }
   });
 
-  /* ----------------------------------------------------------
-     Overlay de recomendaciones post-microsueño
-  ---------------------------------------------------------- */
   function _showRecommendations() {
     hideAllAlertOverlays();
     const count = tripTracker.microsleepCount;
@@ -1023,17 +1085,14 @@ const uiController = (() => {
     showOverlay(DOM.overlayRecommendations);
   }
 
-  /* ----------------------------------------------------------
-     Manejo de errores de cámara
-  ---------------------------------------------------------- */
   function _handleCameraError(err) {
     console.error('[Camera] Error:', err);
     const msgs = {
-      NotFoundError:       ['Cámara no encontrada',   'No se detectó ninguna cámara frontal en tu dispositivo.'],
-      DevicesNotFoundError:['Cámara no encontrada',   'No se detectó ninguna cámara frontal en tu dispositivo.'],
-      NotAllowedError:     ['Permiso denegado',        'Debes permitir el acceso a la cámara. Ve a Ajustes → Privacidad → Cámara.'],
-      PermissionDeniedError:['Permiso denegado',       'Debes permitir el acceso a la cámara. Ve a Ajustes → Privacidad → Cámara.'],
-      NotReadableError:    ['Cámara ocupada',          'Otra aplicación está usando la cámara. Ciérrala e inténtalo de nuevo.'],
+      NotFoundError:       ['Cámara no encontrada',   'No se detectó ninguna cámara.'],
+      DevicesNotFoundError:['Cámara no encontrada',   'No se detectó ninguna cámara.'],
+      NotAllowedError:     ['Permiso denegado',        'Debes permitir el acceso a la cámara.'],
+      PermissionDeniedError:['Permiso denegado',       'Debes permitir el acceso a la cámara.'],
+      NotReadableError:    ['Cámara ocupada',          'Otra aplicación está usando la cámara.'],
     };
     const [title, body] = msgs[err.name] || ['Sin acceso a la cámara',
       'Permite el acceso a la cámara frontal en la configuración de tu navegador.'];
@@ -1042,9 +1101,7 @@ const uiController = (() => {
     fsm.transition(STATE.ERROR);
   }
 
-  /* ----------------------------------------------------------
-     Wake Lock — evitar que la pantalla se apague
-  ---------------------------------------------------------- */
+  /* Wake Lock */
   let _wakeLock = null;
 
   async function _requestWakeLock() {
@@ -1073,11 +1130,12 @@ const uiController = (() => {
     }
   });
 
-  /* ----------------------------------------------------------
-     BOTÓN: Iniciar monitoreo
-  ---------------------------------------------------------- */
+  /* Botón Iniciar Monitoreo */
   DOM.btnStart?.addEventListener('click', async () => {
-    alertSystem.resume(); // desbloquear AudioContext con gesto
+    alertSystem.resume();
+    // Usar deviceId seleccionado
+    const sel = DOM.cameraSelect;
+    if (sel && sel.value) cameraManager.setDeviceId(sel.value);
     try {
       await cameraManager.start();
     } catch (err) {
@@ -1088,17 +1146,11 @@ const uiController = (() => {
     fsm.transition(STATE.MONITORING);
   });
 
-  /* ----------------------------------------------------------
-     BOTÓN: Pausa — toque mínimo 200 ms
-  ---------------------------------------------------------- */
-  let _pressAt = 0;
-
-  DOM.btnPause?.addEventListener('pointerdown', () => { _pressAt = Date.now(); });
-  DOM.btnPause?.addEventListener('pointerleave', () => { _pressAt = 0; });
-
-  DOM.btnPause?.addEventListener('pointerup', () => {
-    if (Date.now() - _pressAt < CFG.PAUSE_MIN_PRESS_MS) return;
-    _pressAt = 0;
+  /* Botón de pausa con debounce */
+  let _pauseDisabledUntil = 0;
+  DOM.btnPause?.addEventListener('click', () => {
+    if (Date.now() < _pauseDisabledUntil) return;
+    _pauseDisabledUntil = Date.now() + CFG.PAUSE_DEBOUNCE_MS;
 
     const s = fsm.current;
     if (s === STATE.MONITORING || s === STATE.PREALERT) {
@@ -1108,56 +1160,44 @@ const uiController = (() => {
     }
   });
 
-  /* ----------------------------------------------------------
-     BOTÓN: Finalizar viaje
-  ---------------------------------------------------------- */
+  /* Botón Finalizar viaje */
   DOM.btnEndTrip?.addEventListener('click', () => {
     if (fsm.current === STATE.MONITORING) fsm.transition(STATE.SUMMARY);
   });
 
-  /* ----------------------------------------------------------
-     BOTÓN: Entendido (prealerta)
-  ---------------------------------------------------------- */
+  /* Botón Entendido (prealerta) */
   DOM.btnUnderstood?.addEventListener('click', () => {
     if (fsm.current === STATE.PREALERT) {
       eyeClosedTimer.reset();
+      blinkBuffer.reset();
       fsm.transition(STATE.MONITORING);
     }
   });
 
-  /* ----------------------------------------------------------
-     BOTÓN: Estoy despierto (fase reducida)
-  ---------------------------------------------------------- */
+  /* Botón Estoy despierto */
   DOM.btnAwake?.addEventListener('click', () => {
     if (fsm.current === STATE.REDUCED) reducedPhase.confirm();
   });
 
-  /* ----------------------------------------------------------
-     BOTÓN: Cerrar recomendaciones → reanudar
-  ---------------------------------------------------------- */
+  /* Botón cerrar recomendaciones */
   DOM.btnRecClose?.addEventListener('click', () => {
     hideOverlay(DOM.overlayRecommendations);
     eyeClosedTimer.reset();
+    headDownTimer.reset();
     fsm.transition(STATE.MONITORING);
   });
 
-  /* ----------------------------------------------------------
-     BOTÓN: Reanudar desde pantalla de pausa
-  ---------------------------------------------------------- */
+  /* Botón Reanudar desde pausa */
   DOM.btnResume?.addEventListener('click', () => {
     if (fsm.current === STATE.PAUSED) fsm.transition(STATE.MONITORING);
   });
 
-  /* ----------------------------------------------------------
-     BOTÓN: Cerrar resumen
-  ---------------------------------------------------------- */
+  /* Botón cerrar resumen */
   DOM.btnSummaryClose?.addEventListener('click', () => {
     fsm.transition(STATE.IDLE);
   });
 
-  /* ----------------------------------------------------------
-     BOTÓN: Reintentar (pantalla de error)
-  ---------------------------------------------------------- */
+  /* Botón Reintentar (error) */
   DOM.btnRetry?.addEventListener('click', () => {
     if (fsm.current === STATE.ERROR) {
       DOM.errorTitle.textContent = '';
@@ -1170,27 +1210,51 @@ const uiController = (() => {
 })();
 
 /* ================================================================
-   PWA INSTALL BANNER
+   PWA INSTALL BANNER  (Android + iOS)
 ================================================================ */
 (() => {
   let _deferred = null;
+  const BANNER_KEY = 'rikuyroad-install-banner-dismissed';
+
+  if (localStorage.getItem(BANNER_KEY) ||
+      window.matchMedia('(display-mode: standalone)').matches) {
+    if (DOM.installBanner) DOM.installBanner.hidden = true;
+  }
 
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault();
     _deferred = e;
-    if (DOM.installBanner) DOM.installBanner.hidden = false;
+    if (DOM.installBanner) {
+      DOM.installBanner.hidden = false;
+      const isIOS = /iphone|ipad|ipod/.test(window.navigator.userAgent.toLowerCase());
+      const msg = DOM.installBanner.querySelector('p');
+      if (msg) {
+        msg.textContent = isIOS
+          ? '📲 Toca el botón Compartir y selecciona "Agregar a pantalla de inicio" para instalar RikuyRoad.'
+          : '📲 Agrega RikuyRoad a tu pantalla de inicio para usarla sin conexión.';
+      }
+    }
+  });
+
+  window.addEventListener('appinstalled', () => {
+    if (DOM.installBanner) DOM.installBanner.hidden = true;
+    localStorage.setItem(BANNER_KEY, '1');
   });
 
   DOM.btnInstall?.addEventListener('click', async () => {
     if (!_deferred) return;
     _deferred.prompt();
-    await _deferred.userChoice;
+    const { outcome } = await _deferred.userChoice;
+    if (outcome === 'accepted') {
+      localStorage.setItem(BANNER_KEY, '1');
+    }
     _deferred = null;
     if (DOM.installBanner) DOM.installBanner.hidden = true;
   });
 
   DOM.btnDismissInstall?.addEventListener('click', () => {
     if (DOM.installBanner) DOM.installBanner.hidden = true;
+    localStorage.setItem(BANNER_KEY, '1');
   });
 })();
 
@@ -1210,6 +1274,8 @@ const loader = (() => {
     try {
       await detectionEngine.init(_setProgress);
       await new Promise((r) => setTimeout(r, 400));
+      // Rellenar selector de cámaras
+      await populateCameraSelect();
       fsm.transition(STATE.IDLE);
     } catch (err) {
       console.error('[Loader] Error:', err);
@@ -1218,6 +1284,32 @@ const loader = (() => {
         'Comprueba tu conexión a internet en el primer uso y vuelve a intentarlo. '
         + 'Una vez cargados, la app funciona sin conexión.';
       fsm.transition(STATE.ERROR);
+    }
+  }
+
+  async function populateCameraSelect() {
+    const sel = DOM.cameraSelect;
+    if (!sel) return;
+    sel.innerHTML = '';
+    try {
+      const cams = await cameraManager.enumerate();
+      if (cams.length === 0) {
+        sel.innerHTML = '<option value="">No se encontraron cámaras</option>';
+        return;
+      }
+      cams.forEach((c, i) => {
+        const opt = document.createElement('option');
+        opt.value = c.deviceId;
+        opt.textContent = c.label;
+        sel.appendChild(opt);
+      });
+      // Seleccionar frontal por defecto
+      const firstFront = cams.find(c => /frontal|front/i.test(c.label));
+      if (firstFront) sel.value = firstFront.deviceId;
+      else if (cams.length > 0) sel.value = cams[0].deviceId;
+    } catch (err) {
+      console.warn('[Loader] No se pudieron enumerar cámaras:', err);
+      sel.innerHTML = '<option value="">Permite acceso a cámara para ver opciones</option>';
     }
   }
 

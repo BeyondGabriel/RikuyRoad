@@ -65,7 +65,6 @@ html, body {
   font-family: system-ui, -apple-system, sans-serif;
   background: var(--color-bg);
   color: var(--color-text);
-  /* Subir brillo en modo oscuro (noche) para visibilidad del conductor */
   -webkit-text-size-adjust: 100%;
 }
 
@@ -82,6 +81,23 @@ button {
   outline: none;
   -webkit-user-select: none;
   user-select: none;
+}
+
+select {
+  font-family: inherit;
+  font-size: 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  width: 100%;
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23888' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 32px;
 }
 
 /* ----------------------------------------------------------------
@@ -149,7 +165,6 @@ button {
   line-height: 1.6;
 }
 
-/* Barra de progreso de carga */
 .splash-progress {
   width: 240px;
   height: 3px;
@@ -166,7 +181,6 @@ button {
   transition: width 0.4s ease;
 }
 
-/* Spinner de carga */
 .splash-spinner {
   width: 32px;
   height: 32px;
@@ -190,7 +204,6 @@ button {
   padding: 0;
 }
 
-/* Preview de cámara deshabilitada / placeholder */
 .idle-camera-preview {
   width: 100%;
   flex: 1;
@@ -221,7 +234,6 @@ button {
   opacity: 0.5;
 }
 
-/* Sección inferior idle */
 .idle-bottom {
   width: 100%;
   background: var(--color-surface);
@@ -249,7 +261,21 @@ button {
   color: var(--color-text-muted);
 }
 
-/* Botón principal "Iniciar Monitoreo" */
+/* Selector de cámara */
+.camera-select-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.camera-select-label {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
 .btn-start {
   width: 100%;
   padding: 18px;
@@ -268,7 +294,6 @@ button {
   transform: scale(0.98);
 }
 
-/* Banner de instalación PWA */
 .install-banner {
   display: flex;
   align-items: center;
@@ -314,18 +339,42 @@ button {
   overflow: hidden;
 }
 
-/* Video — ocupa toda la pantalla */
 #camera-video {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  /* Espejo horizontal para cámara frontal */
   transform: scaleX(-1);
 }
 
-/* HUD — capa de interfaz sobre el vídeo */
+/* Placeholder mientras la cámara no está disponible */
+.camera-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #000;
+  color: #555;
+  font-size: 14px;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.camera-placeholder.hidden {
+  display: none;
+}
+
+.camera-placeholder svg {
+  width: 48px;
+  height: 48px;
+  opacity: 0.4;
+  margin-bottom: 12px;
+}
+
+/* HUD */
 .hud {
   position: absolute;
   inset: 0;
@@ -333,7 +382,6 @@ button {
   z-index: 10;
 }
 
-/* ---- LED de estado ---- */
 .hud-led {
   position: absolute;
   top: 16px;
@@ -356,7 +404,6 @@ button {
   box-shadow: 0 0 10px var(--led-red);
 }
 
-/* ---- Info superior: hora y batería ---- */
 .hud-info {
   position: absolute;
   top: 12px;
@@ -388,7 +435,6 @@ button {
   font-size: 15px;
 }
 
-/* ---- Contador de microsueños ---- */
 .hud-microsleep {
   position: absolute;
   bottom: 100px;
@@ -417,7 +463,6 @@ button {
   color: #fff;
 }
 
-/* ---- Botón de pausa ---- */
 .btn-pause {
   position: absolute;
   top: 8px;
@@ -432,17 +477,13 @@ button {
   justify-content: center;
   font-size: 20px;
   pointer-events: all;
-  /* Retardo de 200ms para evitar activaciones accidentales */
   transition: opacity 0.15s;
   z-index: 20;
-  /* touch-action: none para capturar el tiempo del toque en JS */
-  touch-action: none;
 }
 
 .btn-pause:active { opacity: 0.7; }
 .btn-pause.hidden { display: none; }
 
-/* ---- Botón "Finalizar viaje" ---- */
 .btn-end-trip {
   position: absolute;
   bottom: 36px;
@@ -470,10 +511,8 @@ button {
 }
 
 /* ================================================================
-   OVERLAYS DE ALERTA (dentro de #screen-monitoring)
+   OVERLAYS DE ALERTA
 ================================================================ */
-
-/* Base común de overlays */
 .alert-overlay {
   position: absolute;
   inset: 0;
@@ -490,7 +529,6 @@ button {
 
 .alert-overlay.visible { display: flex; }
 
-/* ---- PREALERTA (naranja) ---- */
 #overlay-prealert {
   background: var(--alert-orange);
   backdrop-filter: blur(2px);
@@ -506,7 +544,6 @@ button {
   max-width: 300px;
 }
 
-/* ---- ALERTA INICIAL (rojo parpadeante 2Hz) ---- */
 #overlay-alert-initial {
   animation: blink-red 0.5s step-end infinite;
 }
@@ -516,7 +553,6 @@ button {
   50%       { background: #0a0a0a; }
 }
 
-/* ---- ALERTA MÁXIMA (estroboscópico 10Hz) ---- */
 #overlay-alert-max {
   animation: blink-strobe 0.1s step-end infinite;
 }
@@ -526,7 +562,6 @@ button {
   50%       { background: #0a0a0a; }
 }
 
-/* Texto de alerta (inicial y máxima) */
 .alert-icon {
   font-size: 64px;
   line-height: 1;
@@ -553,7 +588,6 @@ button {
   font-weight: 600;
 }
 
-/* ---- FASE REDUCIDA (amarillo) ---- */
 #overlay-reduced {
   background: rgba(202,138,4,0.95);
 }
@@ -565,7 +599,6 @@ button {
   text-shadow: 0 1px 6px rgba(0,0,0,0.3);
 }
 
-/* Temporizador de 5s en fase reducida */
 .reduced-timer {
   font-size: 52px;
   font-weight: 800;
@@ -585,7 +618,7 @@ button {
 }
 
 /* ================================================================
-   BOTONES DE OVERLAY (Entendido, Estoy despierto)
+   BOTONES DE OVERLAY
 ================================================================ */
 .btn-overlay {
   width: 100%;
@@ -615,7 +648,7 @@ button {
 }
 
 /* ================================================================
-   OVERLAY POST-MICROSUEÑO (recomendaciones)
+   OVERLAY POST-MICROSUEÑO
 ================================================================ */
 #overlay-recommendations {
   position: absolute;
@@ -635,12 +668,10 @@ button {
 
 #overlay-recommendations.visible { display: flex; }
 
-/* Primer microsueño — ámbar */
 #overlay-recommendations.level-1 {
   background: rgba(120,53,15,0.92);
 }
 
-/* Segundo microsueño o más — rojo */
 #overlay-recommendations.level-2 {
   background: rgba(127,29,29,0.95);
 }
@@ -674,7 +705,7 @@ button {
 }
 
 /* ================================================================
-   PANTALLA: PAUSA (#screen-paused)
+   PANTALLA: PAUSA
 ================================================================ */
 #screen-paused {
   background: #0a0a0a;
@@ -737,7 +768,7 @@ button {
 }
 
 /* ================================================================
-   PANTALLA: SUMMARY (#screen-summary)
+   PANTALLA: SUMMARY
 ================================================================ */
 #screen-summary {
   background: var(--color-bg);
@@ -768,7 +799,6 @@ button {
   color: var(--color-text-muted);
 }
 
-/* Tarjetas de estadísticas */
 .summary-stats {
   width: 100%;
   display: flex;
@@ -822,7 +852,7 @@ button {
 }
 
 /* ================================================================
-   PANTALLA: ERROR (#screen-error)
+   PANTALLA: ERROR
 ================================================================ */
 #screen-error {
   background: var(--color-bg);
@@ -870,12 +900,6 @@ button {
   border: 0;
 }
 
-/* Ocultar video antes de iniciarlo */
-#camera-video:not([srcObject]) {
-  display: none;
-}
-
-/* Prevenir scroll en overlays táctiles */
 .alert-overlay, #overlay-recommendations {
   overscroll-behavior: contain;
   touch-action: none;
