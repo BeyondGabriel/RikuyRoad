@@ -1216,22 +1216,46 @@ const uiController = (() => {
   let _deferred = null;
   const BANNER_KEY = 'rikuyroad-install-banner-dismissed';
 
+  // Ocultar si ya se descartó o si ya está instalado en standalone
   if (localStorage.getItem(BANNER_KEY) ||
       window.matchMedia('(display-mode: standalone)').matches) {
     if (DOM.installBanner) DOM.installBanner.hidden = true;
   }
 
+  // Detectar si es Android/iOS/otro
+  const ua = window.navigator.userAgent.toLowerCase();
+  const isAndroid = /android/.test(ua);
+  const isIOS = /iphone|ipad|ipod/.test(ua);
+  const isMobile = isAndroid || isIOS;
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
+
+  // Si no es móvil, mostrar un banner informativo que se puede cerrar
+  if (!isMobile && !isStandalone) {
+    if (DOM.installBanner) {
+      DOM.installBanner.hidden = false;
+      const msg = DOM.installBanner.querySelector('p');
+      if (msg) {
+        msg.textContent = '💻 Usa RikuyRoad en tu móvil con Chrome o Safari para instalarla como app sin conexión.';
+      }
+      // Ocultar botón de instalar en PC, dejar solo cerrar
+      if (DOM.btnInstall) DOM.btnInstall.style.display = 'none';
+    }
+  }
+
   window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault();
     _deferred = e;
-    if (DOM.installBanner) {
+    if (DOM.installBanner && isMobile) {
       DOM.installBanner.hidden = false;
-      const isIOS = /iphone|ipad|ipod/.test(window.navigator.userAgent.toLowerCase());
+      // Mostrar botón de instalar si está oculto
+      if (DOM.btnInstall) DOM.btnInstall.style.display = '';
       const msg = DOM.installBanner.querySelector('p');
       if (msg) {
-        msg.textContent = isIOS
-          ? '📲 Toca el botón Compartir y selecciona "Agregar a pantalla de inicio" para instalar RikuyRoad.'
-          : '📲 Agrega RikuyRoad a tu pantalla de inicio para usarla sin conexión.';
+        if (isIOS) {
+          msg.textContent = '📲 Toca el botón Compartir y selecciona "Agregar a pantalla de inicio" para instalar RikuyRoad.';
+        } else {
+          msg.textContent = '📲 Agrega RikuyRoad a tu pantalla de inicio para usarla sin conexión.';
+        }
       }
     }
   });
