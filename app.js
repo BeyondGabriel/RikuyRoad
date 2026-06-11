@@ -116,6 +116,7 @@ const DOM = {
   video:                  document.getElementById('camera-video'),
   cameraPlaceholder:      document.getElementById('camera-placeholder'),
   cameraSelect:           document.getElementById('camera-select'),
+  btnRefreshCameras:      document.getElementById('btn-refresh-cameras'),
   hudLed:                 document.getElementById('hud-led'),
   hudClock:               document.getElementById('hud-clock'),
   hudBatteryIcon:         document.getElementById('hud-battery-icon'),
@@ -193,15 +194,17 @@ const cameraManager = (() => {
       for (const d of cams) {
         const label = d.label || `Cámara ${list.length + 1}`;
         let tipo = label;
-        // Clasificar como frontal si el label incluye "front"
-        if (/front/i.test(label)) tipo = 'Cámara frontal';
-        // Excluir explícitamente cámaras traseras / environment
-        if (/back|rear|environment/i.test(label)) continue;
+        // Clasificar cámaras según su tipo
+        if (/front/i.test(label)) tipo = '📱 Cámara frontal';
+        else if (/back|rear/i.test(label)) tipo = '📷 Cámara trasera';
+        else if (/external|usb|webcam/i.test(label)) tipo = '🖥️ Webcam externa';
+        else tipo = '📹 ' + label;
+        // Incluir TODAS las cámaras (sin excluir traseras)
         list.push({ deviceId: d.deviceId, label: tipo });
       }
-      // Si no hay ninguna tras filtrar, ofrecer la frontal (por defecto)
+      // Si no hay cámaras, mostrar mensaje
       if (list.length === 0 && cams.length > 0) {
-        list.push({ deviceId: cams[0].deviceId, label: 'Cámara frontal' });
+        list.push({ deviceId: cams[0].deviceId, label: '📹 Cámara predeterminada' });
       }
       return list;
     },
@@ -1206,6 +1209,40 @@ const uiController = (() => {
     }
   });
 
+  /* Botón actualizar lista de cámaras */
+  DOM.btnRefreshCameras?.addEventListener('click', async () => {
+    if (DOM.btnRefreshCameras) {
+      DOM.btnRefreshCameras.disabled = true;
+      DOM.btnRefreshCameras.textContent = '⏳';
+    }
+    await populateCameraSelect();
+    setTimeout(() => {
+      if (DOM.btnRefreshCameras) {
+        DOM.btnRefreshCameras.disabled = false;
+        DOM.btnRefreshCameras.textContent = '🔄';
+      }
+    }, 1000);
+  });
+
+  /* Detectar cambio en selector de cámara */
+  DOM.cameraSelect?.addEventListener('change', (e) => {
+    const selectedId = e.target.value;
+    if (selectedId) {
+      cameraManager.setDeviceId(selectedId);
+      console.log('[UI] Cámara seleccionada:', selectedId);
+    }
+  });
+
+  /* Detectar cambios en dispositivos multimedia (webcam conectada/desconectada) */
+  if (navigator.mediaDevices && navigator.mediaDevices.ondevicechange !== undefined) {
+    navigator.mediaDevices.addEventListener('devicechange', async () => {
+      console.log('[UI] Cambio de dispositivos detectado');
+      if (typeof window.populateCameraSelect === 'function') {
+        await window.populateCameraSelect();
+      }
+    });
+  }
+
   return { onDetectionResult };
 })();
 
@@ -1314,6 +1351,7 @@ const loader = (() => {
   async function populateCameraSelect() {
     const sel = DOM.cameraSelect;
     if (!sel) return;
+    const prevValue = sel.value;
     sel.innerHTML = '';
     try {
       const cams = await cameraManager.enumerate();
@@ -1327,15 +1365,22 @@ const loader = (() => {
         opt.textContent = c.label;
         sel.appendChild(opt);
       });
-      // Seleccionar frontal por defecto
-      const firstFront = cams.find(c => /frontal|front/i.test(c.label));
-      if (firstFront) sel.value = firstFront.deviceId;
-      else if (cams.length > 0) sel.value = cams[0].deviceId;
+      // Mantener selección previa si existe, sino seleccionar frontal por defecto
+      if (prevValue && cams.some(c => c.deviceId === prevValue)) {
+        sel.value = prevValue;
+      } else {
+        const firstFront = cams.find(c => /frontal|front/i.test(c.label));
+        if (firstFront) sel.value = firstFront.deviceId;
+        else if (cams.length > 0) sel.value = cams[0].deviceId;
+      }
     } catch (err) {
       console.warn('[Loader] No se pudieron enumerar cámaras:', err);
       sel.innerHTML = '<option value="">Permite acceso a cámara para ver opciones</option>';
     }
   }
+
+  // Hacer populateCameraSelect accesible globalmente para el evento devicechange
+  window.populateCameraSelect = populateCameraSelect;
 
   return { run };
 })();
