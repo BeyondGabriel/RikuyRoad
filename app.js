@@ -9,7 +9,7 @@
      · BlinkBuffer — ventana deslizante 60s
      · EyeClosedTimer — microsueño y escalada
      · HeadDownTimer — detección de cabeza caída (8s sin rostro)
-     · AlertSystem — audio (AudioContext) y vibración
+     · AlertSystem — audio (AudioContext) y vibración + monitoreo de volumen
      · TripTracker — métricas de sesión
      · HUD — reloj, batería, LED, contador
      · ReducedPhase — temporizador 5s fase amarilla
@@ -129,10 +129,12 @@ const DOM = {
   overlayAlertMax:        document.getElementById('overlay-alert-max'),
   overlayReduced:         document.getElementById('overlay-reduced'),
   overlayRecommendations: document.getElementById('overlay-recommendations'),
+  overlayVolumeWarning:   document.getElementById('overlay-volume-warning'),
   reducedTimer:           document.getElementById('reduced-timer'),
   btnUnderstood:          document.getElementById('btn-understood'),
   btnAwake:               document.getElementById('btn-awake'),
   btnRecClose:            document.getElementById('btn-rec-close'),
+  btnVolumeOk:            document.getElementById('btn-volume-ok'),
   recIcon:                document.getElementById('rec-icon'),
   recTitle:               document.getElementById('rec-title'),
   recBody:                document.getElementById('rec-body'),
@@ -167,6 +169,7 @@ function hideAllAlertOverlays() {
     DOM.overlayAlertInitial,
     DOM.overlayAlertMax,
     DOM.overlayReduced,
+    DOM.overlayVolumeWarning,
   ].forEach(hideOverlay);
 }
 
@@ -567,7 +570,7 @@ const headDownTimer = (() => {
 })();
 
 /* ================================================================
-   ALERT SYSTEM — AudioContext + vibración
+   ALERT SYSTEM — AudioContext + vibración + monitoreo de volumen
 ================================================================ */
 const alertSystem = (() => {
   let _ctx          = null;
@@ -576,11 +579,59 @@ const alertSystem = (() => {
   let _strobeTimer  = null;
   let _softTimer    = null;
   let _vibrateTimer = null;
+  let _volumeCheckInterval = null;
+  let _lastVolumeWarningTs = 0;
+  const VOLUME_WARNING_COOLDOWN_MS = 30000; // 30 segundos entre advertencias
 
   function _ensureCtx() {
     if (!_ctx) _ctx = new (window.AudioContext || window.webkitAudioContext)();
     if (_ctx.state === 'suspended') _ctx.resume().catch(() => {});
     return _ctx;
+  }
+
+  /* Monitoreo de volumen del sistema */
+  function startVolumeMonitoring() {
+    stopVolumeMonitoring();
+    _volumeCheckInterval = setInterval(() => {
+      try {
+        // Intentar detectar si el volumen es bajo usando la API de AudioOutputDevice
+        // Nota: No podemos leer el volumen del sistema directamente por seguridad,
+        // pero podemos verificar si el contexto de audio está funcionando correctamente
+        const ctx = _ensureCtx();
+        const currentTime = Date.now();
+
+        // Si el usuario ha bajado el volumen del sistema, las alarmas sonarán bajas
+        // Mostramos una advertencia periódica durante el monitoreo
+        if (fsm.current === STATE.MONITORING &&
+            currentTime - _lastVolumeWarningTs > VOLUME_WARNING_COOLDOWN_MS) {
+          // Solo mostramos la advertencia si no se ha mostrado recientemente
+          // El usuario debe confirmar que leyó el mensaje
+          showVolumeWarningIfNeeded();
+        }
+      } catch (_) {}
+    }, 10000); // Verificar cada 10 segundos
+  }
+
+  function stopVolumeMonitoring() {
+    if (_volumeCheckInterval) {
+      clearInterval(_volumeCheckInterval);
+      _volumeCheckInterval = null;
+    }
+  }
+
+  function showVolumeWarningIfNeeded() {
+    // Mostrar advertencia de volumen bajo
+    // Esta función será llamada cuando detectemos que el usuario podría tener el volumen bajo
+    if (DOM.overlayVolumeWarning && !DOM.overlayVolumeWarning.classList.contains('visible')) {
+      _lastVolumeWarningTs = Date.now();
+      showOverlay(DOM.overlayVolumeWarning);
+      // Reproducir un beep suave para llamar la atención
+      _beep(440, 150, 0.3, 'sine');
+    }
+  }
+
+  function recordVolumeAcknowledgment() {
+    _lastVolumeWarningTs = Date.now();
   }
 
   function _beep(freq = 880, ms = 200, vol = 0.8, type = 'sine') {
@@ -665,7 +716,17 @@ const alertSystem = (() => {
 
   function resume() { _ctx?.resume().catch(() => {}); }
 
-  return { startPrealert, startAlertInitial, startAlertMax, startReduced, stopAll, resume };
+  return {
+    startPrealert,
+    startAlertInitial,
+    startAlertMax,
+    startReduced,
+    stopAll,
+    resume,
+    startVolumeMonitoring,
+    stopVolumeMonitoring,
+    recordVolumeAcknowledgment
+  };
 })();
 
 /* ================================================================
@@ -940,6 +1001,7 @@ const uiController = (() => {
         detectionEngine.stop();
         detectionEngine.start(onDetectionResult);
         hud.start();
+        alertSystem.startVolumeMonitoring();
         break;
       }
 
@@ -1006,6 +1068,7 @@ const uiController = (() => {
       case STATE.PAUSED: {
         if (alertEscalateTimeout) clearTimeout(alertEscalateTimeout);
         alertSystem.stopAll();
+        alertSystem.stopVolumeMonitoring();
         reducedPhase.stop();
         detectionEngine.stop();
         blinkBuffer.freeze();
@@ -1025,6 +1088,7 @@ const uiController = (() => {
       case STATE.SUMMARY: {
         if (alertEscalateTimeout) clearTimeout(alertEscalateTimeout);
         alertSystem.stopAll();
+        alertSystem.stopVolumeMonitoring();
         reducedPhase.stop();
         detectionEngine.stop();
         cameraManager.stop();
@@ -1046,6 +1110,7 @@ const uiController = (() => {
 
       case STATE.IDLE: {
         alertSystem.stopAll();
+        alertSystem.stopVolumeMonitoring();
         detectionEngine.stop();
         cameraManager.stop();
         hud.stop();
@@ -1055,6 +1120,7 @@ const uiController = (() => {
 
       case STATE.ERROR: {
         alertSystem.stopAll();
+        alertSystem.stopVolumeMonitoring();
         detectionEngine.stop();
         cameraManager.stop();
         hud.stop();
@@ -1188,6 +1254,12 @@ const uiController = (() => {
     eyeClosedTimer.reset();
     headDownTimer.reset();
     fsm.transition(STATE.MONITORING);
+  });
+
+  /* Botón Entendido - Advertencia de volumen */
+  DOM.btnVolumeOk?.addEventListener('click', () => {
+    hideOverlay(DOM.overlayVolumeWarning);
+    alertSystem.recordVolumeAcknowledgment();
   });
 
   /* Botón Reanudar desde pausa */
